@@ -1,0 +1,135 @@
+# =============================================================================
+# OTel Collector Configuration — AI Flight Recorder
+# =============================================================================
+# Receives traces from your agent system via gRPC (OTLP),
+# processes them (batching, PII attributes removal, tail-based sampling),
+# and exports to Jaeger + Langfuse + PostgreSQL.
+#
+# Usage:
+#   otelcol --config collector_config.yaml
+#
+# Or in Docker:
+#   docker run -v ./collector_config.yaml:/etc/otelcol/config.yaml \
+#     otel/opentelemetry-collector-contrib:latest
+# =============================================================================
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"
+      http:
+        endpoint: "0.0.0.0:4318"
+
+processors:
+  # -- Batch for efficiency --
+  batch:
+    send_batch_size: 512
+    send_batch_max_size: 1024
+    timeout: 5s
+
+  # -- Memory limiter to prevent OOM --
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  # -- Resource detection --
+  resourcedetection:
+    detectors: [env, system]
+    timeout: 5s
+
+  # -- Attribute processing: redact sensitive fields --
+  attributes/redact:
+    actions:
+      # Remove raw prompt/response content from export
+      # (keep it only in the event store, which has PII redaction)
+      - key: gen_ai.system_instructions
+        action: delete
+      - key: gen_ai.input.messages
+        action: delete
+      - key: gen_ai.output.messages
+        action: delete
+      # Hash user IDs for privacy
+      - key: user.id
+        action: hash
+
+  # -- Tail-based sampling --
+  # Keep ALL errors, high-latency, guardrail failures.
+  # Sample 10% of successful traces.
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 50000
+    expected_new_traces_per_sec: 100
+    policies:
+      # Always keep error traces
+      - name: errors-always-keep
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+
+      # Always keep high-latency traces (>5s)
+      - name: high-latency-keep
+        type: latency
+        latency:
+          threshold_ms: 5000
+
+      # Always keep guardrail failures
+      - name: guardrail-failures-keep
+        type: string_attribute
+        string_attribute:
+          key: guardrail.passed
+          values: ["false"]
+
+      # Always keep high-risk operations
+      - name: high-risk-keep
+        type: string_attribute
+        string_attribute:
+          key: agent.risk_level
+          values: ["high", "critical"]
+
+      # Sample 10% of successful traces
+      - name: success-sample
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+
+exporters:
+  # -- OTLP to Jaeger (traces UI) --
+  otlp/jaeger:
+    endpoint: "jaeger:4317"
+    tls:
+      insecure: true
+
+  # -- OTLP to Langfuse (if using OTLP ingest) --
+  otlphttp/langfuse:
+    endpoint: "https://cloud.langfuse.com/api/public/otel"
+    headers:
+      Authorization: "Basic ${env:LANGFUSE_BASE64_AUTH}"
+
+  # -- Debug logging (development only) --
+  debug:
+    verbosity: basic
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+extensions:
+  health_check:
+    endpoint: "0.0.0.0:13133"
+  zpages:
+    endpoint: "0.0.0.0:55679"
+
+service:
+  extensions: [health_check, zpages]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, attributes/redact, tail_sampling, batch]
+      exporters: [otlp/jaeger, debug]
+      # Add otlphttp/langfuse to exporters list when Langfuse credentials are configured
+
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      address: "0.0.0.0:8888"
