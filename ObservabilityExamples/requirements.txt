@@ -1,0 +1,27 @@
+# AI Flight Recorder — Python Dependencies
+# pip install -r requirements.txt
+
+# OpenTelemetry Core
+opentelemetry-api>=1.29.0
+opentelemetry-sdk>=1.29.0
+opentelemetry-semantic-conventions>=0.50b0
+
+# OTel Exporters
+opentelemetry-exporter-otlp-proto-grpc>=1.29.0
+
+# OTel GenAI Instrumentation
+opentelemetry-instrumentation-openai>=0.35b0
+
+# PostgreSQL (Event Store)
+psycopg2-binary>=2.9.9
+
+# Async HTTP (for inter-agent communication examples)
+httpx>=0.27.0
+
+# FastAPI (for middleware demo)
+fastapi>=0.115.0
+uvicorn>=0.32.0
+
+# Testing
+pytest>=8.3.0
+pytest-asyncio>=0.24.0

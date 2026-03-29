@@ -1,0 +1,59 @@
+# =============================================================================
+# AI Flight Recorder — Local Development Stack
+# =============================================================================
+# Provides: Jaeger (trace UI), OTel Collector, PostgreSQL (event store)
+#
+# Usage:
+#   docker compose up -d
+#   # Jaeger UI:        http://localhost:16686
+#   # OTel Collector:   grpc://localhost:4317, http://localhost:4318
+#   # PostgreSQL:       localhost:5432/flight_recorder
+#   # Health check:     http://localhost:13133
+# =============================================================================
+
+services:
+  # -- Jaeger: Distributed Trace UI --
+  jaeger:
+    image: jaegertracing/all-in-one:1.64
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "14268:14268"   # Jaeger collector HTTP
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    restart: unless-stopped
+
+  # -- OTel Collector: Receives, processes, exports traces --
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.118.0
+    volumes:
+      - ./src/flight_recorder/collector_config.yaml:/etc/otelcol/config.yaml
+    ports:
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP
+      - "13133:13133"   # Health check
+      - "55679:55679"   # zPages
+      - "8888:8888"     # Metrics
+    depends_on:
+      - jaeger
+    restart: unless-stopped
+
+  # -- PostgreSQL: Flight Record Event Store --
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: flight_recorder
+      POSTGRES_USER: flight_recorder
+      POSTGRES_PASSWORD: fr_dev_password_change_me
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flight_recorder"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
